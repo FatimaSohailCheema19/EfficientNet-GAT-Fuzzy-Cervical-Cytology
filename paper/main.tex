@@ -1,0 +1,975 @@
+\documentclass[10pt,conference]{IEEEtran}
+
+% =============================================================
+% COMPILE MODE
+% =============================================================
+% Keep false for the final PDF with images.
+% Change to \quickcompiletrue only while editing on Overleaf's free plan;
+% images will be replaced by light-weight filename boxes.
+\newif\ifquickcompile
+\quickcompilefalse
+
+% =============================================================
+% PACKAGES
+% =============================================================
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{cite}
+\usepackage{xurl}
+\usepackage{placeins}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[hidelinks,hypertexnames=false]{hyperref}
+
+% Do not add fixltx2e, dblfloatfix, or microtype here.
+% Those packages caused the warnings seen in the previous Overleaf project.
+
+\graphicspath{{figures/}}
+\DeclareGraphicsExtensions{.pdf,.png,.jpg,.jpeg}
+
+% Moderate PDF compression for faster compilation.
+\ifdefined\pdfcompresslevel
+  \pdfcompresslevel=3
+\fi
+\ifdefined\pdfobjcompresslevel
+  \pdfobjcompresslevel=2
+\fi
+
+% Compile safely if a figure is absent. The same source can therefore be
+% pasted into a new Overleaf project before all result PNGs are uploaded.
+\newcommand{\missingfigurebox}[1]{%
+  \fbox{%
+    \parbox[c][3.0cm][c]{0.91\linewidth}{%
+      \centering\scriptsize
+      Figure placeholder\\[2pt]
+      \texttt{\detokenize{#1}}%
+    }%
+  }%
+}
+
+\newcommand{\safeincludegraphics}[2][]{%
+  \ifquickcompile
+    \missingfigurebox{#2}%
+  \else
+    \IfFileExists{figures/#2}{%
+      \includegraphics[#1]{figures/#2}%
+    }{%
+      \IfFileExists{#2}{%
+        \includegraphics[#1]{#2}%
+      }{%
+        \missingfigurebox{#2}%
+      }%
+    }%
+  \fi
+}
+
+% Float settings that work well with IEEEtran without expensive repeated
+% page flushing.
+\renewcommand{\topfraction}{0.97}
+\renewcommand{\dbltopfraction}{0.97}
+\renewcommand{\textfraction}{0.03}
+\renewcommand{\floatpagefraction}{0.82}
+\renewcommand{\dblfloatpagefraction}{0.82}
+\setcounter{topnumber}{4}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{6}
+\setcounter{dbltopnumber}{3}
+\setlength{\textfloatsep}{7pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{7pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\renewcommand{\arraystretch}{1.08}
+
+\hyphenation{SIPaKMeD EfficientNet Koilocytotic Dyskeratotic Metaplastic cytology}
+
+\begin{document}
+
+\title{EfficientNet-B0 Region-Graph Attention Network with a Fuzzy Confidence Head for Five-Class Cervical Cytology Classification}
+
+\author{
+\IEEEauthorblockN{Nayab Nasir, Namra Noor, Fatima Sohail}
+\IEEEauthorblockA{GIFT University, Gujranwala, Pakistan}
+{(231980059, 231980046, 231980004)}@gift.edu.pk
+}
+
+\maketitle
+
+% =============================================================
+% ABSTRACT
+% =============================================================
+\begin{abstract}
+Distinguishing cervical-cell categories is challenging because classes with different clinical meanings may still look alike in terms of texture, staining, nuclear shape, and cytoplasmic appearance. Ensemble approaches can improve stability by combining several convolutional networks, but they also raise the computational burden and commonly merge only the final class probabilities, after much of the spatial detail has already been compressed. This study introduces an EfficientNet-B0 Region-Graph Attention Network with a Fuzzy Confidence Head for classifying isolated cervical cells into five categories. A single ImageNet-pretrained EfficientNet-B0 encoder produces a $1280\times7\times7$ feature map, which is projected to 160 channels and represented as a five-node graph formed by four spatial quadrants and one global-context node. Two graph attention layers allow local and global descriptors to exchange information before graph mean pooling and multilayer-perceptron classification. The optimization objective also incorporates a differentiable fuzzy confidence-and-separation score. Evaluation is carried out on all 4,049 SIPaKMeD images using stratified five-fold cross-validation. The completed runs achieve mean accuracy, macro precision, macro recall, and macro F1-score of 97.46\%, 97.48\%, 97.47\%, and 97.47\%, respectively. Across the combined out-of-fold predictions, 3,946 samples are classified correctly and 103 are misclassified. In a descriptive comparison with the assigned fuzzy-rank ensemble, which reports 95.43\% five-class accuracy, the proposed method gains 2.03 percentage points in accuracy and lowers the error rate by approximately 44.3\%. The paper includes quantitative results, qualitative explanations, confidence and error analyses, and an ablation discussion that remains faithful to the executed code. Overall, the findings suggest that explicit local--global feature interaction can deliver strong performance with a single compact encoder, while external validation, group-aware data splitting, calibration, and controlled retraining of individual components are still required before any clinical application.
+
+The implementation, configuration files, fold-level results, and
+reproducibility materials are available at:
+\url{https://github.com/nayab20im-tech/EfficientNet-GAT-Fuzzy-Cytology}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+cervical cytology, Pap smear, EfficientNet-B0, graph attention network, fuzzy confidence, SIPaKMeD, Grad-CAM, medical image classification
+\end{IEEEkeywords}
+
+% =============================================================
+% I. INTRODUCTION
+% =============================================================
+\section{Introduction}
+
+Cervical cancer continues to be a major public-health concern, although timely screening and treatment of precancerous changes can prevent a large proportion of cases. Automated cytology analysis may assist specialists by drawing attention to suspicious cells and reducing the workload associated with repeated manual review. For such a system to be useful, however, it must separate visually similar categories while also remaining efficient and reasonably interpretable.
+
+Pap-smear classification is a fine-grained visual-recognition task. Dyskeratotic and Koilocytotic cells belong to abnormal categories, Metaplastic cells are benign, and Parabasal together with Superficial-Intermediate cells are normal. In practice, these classes are not always visually distinct. Differences in staining, orientation, contrast, background content, and the relative appearance of the nucleus and cytoplasm can make separate categories resemble one another. A model that reduces the whole image to a single global representation may therefore lose relationships between diagnostically useful regions.
+
+The assigned baseline proposed by Manna \emph{et al.}~\cite{manna2021} fuses the outputs of Inception-v3, Xception, and DenseNet-169 with fixed fuzzy-rank functions. Although the ensemble performs well, running three separate encoders is computationally expensive. Its fusion also takes place only after each network has generated class probabilities, so evidence from different image regions cannot influence one another during representation learning. This limitation motivates a single-backbone design that keeps coarse spatial information and explicitly models the connection between local regions and the overall cell appearance.
+
+To address these issues, this work develops an EfficientNet-B0--GAT--Fuzzy framework. EfficientNet-B0 serves as the visual backbone, four quadrant descriptors together with one global descriptor define a small graph, graph attention learns image-specific weights between connected nodes, and a fuzzy confidence-and-separation term is included during optimization. The description remains aligned with the supplied notebook and does not add components that were not implemented.
+
+The main contributions are:
+\begin{itemize}
+    \item A cervical-cell classifier built around one EfficientNet-B0 backbone and a lightweight $1\times1$ projection, replacing the three-CNN baseline ensemble.
+    \item A compact five-node graph that retains coarse spatial information through four local quadrants and one global-context node.
+    \item Two masked graph attention layers that learn how local and global evidence should be combined for each image before classification.
+    \item A fuzzy confidence-and-separation head and training objective that match the code, supported by five-fold out-of-fold evaluation, Grad-CAM visualization, confidence and error studies, and an ablation discussion that reports only executed or analytically verifiable findings.
+\end{itemize}
+
+% =============================================================
+% II. LITERATURE REVIEW
+% =============================================================
+\section{Literature Review}
+
+\subsection{Cervical Cytology Datasets and CNN Classification}
+
+Plissiti \emph{et al.}~\cite{plissiti2018sipakmed} introduced SIPaKMeD to support both feature-based and image-based recognition of normal and pathological cervical cells. The dataset contains 4,049 isolated-cell images distributed across five cytological classes and is now widely used in automated Pap-smear research. Earlier deep-learning work established that convolutional networks can learn useful cervical-cell representations directly from image data. Lin \emph{et al.}~\cite{lin2018morphology} also demonstrated that combining morphology with appearance can improve discrimination, highlighting the diagnostic value of both nuclear and cytoplasmic structure.
+
+Researchers have also examined transfer learning and explicit feature-selection strategies. Basak \emph{et al.}~\cite{basak2021pca} combined deep representations with principal-component analysis and Grey Wolf Optimization, obtaining strong results on several cervical datasets. A drawback of this type of pipeline is that representation learning, feature selection, and classification remain separate processing stages rather than being optimized as one end-to-end model.
+
+\subsection{Ensemble and Fuzzy Decision Methods}
+
+Manna \emph{et al.}~\cite{manna2021} combined Inception-v3, Xception, and DenseNet-169 through a fuzzy rank-based ensemble and reported 95.43\% accuracy on the five-class SIPaKMeD task; this method is used as the assigned baseline. Pramanik \emph{et al.}~\cite{pramanik2022fuzzy} later introduced a fuzzy distance-based ensemble for cervical cancer detection. Together, these studies indicate that fuzzy fusion can improve robustness. At the same time, using several complete backbones increases both training and inference cost, and the fusion is typically applied to final predictions rather than to spatially organized feature representations.
+
+\subsection{Attention, Transformers, and Structured Reasoning}
+
+EfficientNet jointly scales depth, width, and image resolution through a compound strategy~\cite{tan2019efficientnet}. Its B0 variant is a practical choice when a strong visual encoder is needed without a very large parameter count. Attention-based cervical classification has also gained interest. CerviFormer, for example, applies cross-attention and a latent Transformer to integrate Pap-smear information~\cite{deo2024cerviformer}. More recent geometry-aware attention research likewise suggests that structural priors and long-range dependencies can be valuable for cervical cytology~\cite{li2026geometry}.
+
+Graph neural networks offer another way to model structure by treating image regions as nodes and the relations between them as edges. Graph Attention Networks (GATs) use masked attention to assign different weights to neighboring nodes~\cite{velickovic2018gat}. This idea is relevant to cytology because a diagnosis may depend on how the nucleus, cytoplasm, boundary, and overall cell appearance relate to one another, rather than on a single isolated area. The proposed method therefore uses a small fixed region graph instead of a dense pixel-level graph, keeping the computation manageable while still enabling relational reasoning.
+
+\subsection{Explainability and Reliability}
+
+A high accuracy value does not explain which parts of an image influenced the decision. Grad-CAM traces gradients into a convolutional layer to create a coarse map of visually important regions~\cite{selvaraju2017gradcam}. Here, it is applied to held-out samples to examine whether the full CNN--GAT--fuzzy pipeline focuses on meaningful cellular structures or on potential shortcuts such as image borders and background patterns. Confidence distributions and confidently misclassified cases are also studied, since a wrong prediction made with high certainty presents a greater reliability concern than an uncertain error.
+
+% =============================================================
+% III. PROPOSED METHODOLOGY
+% =============================================================
+\section{Proposed Methodology}
+
+\subsection{System Overview}
+
+For an RGB Pap-smear image $\mathbf{x}\in\mathbb{R}^{3\times224\times224}$, the implemented processing sequence is
+\begin{equation}
+\mathbf{x}\rightarrow E_{\theta}\rightarrow \mathbf{F}_{0}
+\rightarrow \mathbf{F}\rightarrow \mathbf{H}
+\rightarrow \mathrm{GAT}_{1,2}\rightarrow \mathbf{z}
+\rightarrow \mathbf{o}\rightarrow \mathbf{s}\rightarrow \hat{y}.
+\end{equation}
+These stages represent image preprocessing, EfficientNet-B0 feature extraction, channel reduction, region-graph formation, graph-attention updates, graph pooling, MLP classification, and fuzzy decision scoring.
+
+\begin{figure*}[!t]
+    \centering
+    \safeincludegraphics[
+        width=0.98\textwidth,
+        height=0.47\textheight,
+        keepaspectratio
+    ]{architecture.png}
+    \caption{Overview of the proposed EfficientNet-B0--GAT--Fuzzy pipeline. The $224\times224$ RGB cell image passes through EfficientNet-B0, a 160-channel projection, four local quadrant nodes and one global node, two graph attention layers, graph pooling, an MLP classifier, and the softmax and fuzzy confidence outputs.}
+    \label{fig:architecture}
+\end{figure*}
+
+\subsection{Preprocessing and EfficientNet-B0 Encoder}
+
+All images are resized to $224\times224$. Training samples undergo random horizontal flipping, rotation within $\pm12^{\circ}$, and light colour jitter. The images are then converted to tensors and normalized using ImageNet channel statistics, whereas validation images follow the same resizing and normalization steps without random augmentation.
+
+The classification layer of EfficientNet-B0 is discarded, leaving only the convolutional feature extractor. Its output is
+\begin{equation}
+\mathbf{F}_{0}=E_{\theta}(\mathbf{x})
+\in\mathbb{R}^{1280\times7\times7}.
+\end{equation}
+A learnable $1\times1$ convolution then reduces the channel count from 1280 to 160:
+\begin{equation}
+\mathbf{F}=\operatorname{Conv}_{1\times1}(\mathbf{F}_{0})
+\in\mathbb{R}^{160\times7\times7}.
+\end{equation}
+This projection lowers the dimensionality supplied to the graph module without changing the $7\times7$ spatial arrangement.
+
+\subsection{Five-Node Region Graph}
+
+The projected map is split at its integer midpoints into top-left, top-right, bottom-left, and bottom-right regions. Because the map size is $7\times7$, these regions measure $3\times3$, $3\times4$, $4\times3$, and $4\times4$, respectively. Adaptive average pooling turns each region into a 160-dimensional descriptor, while a fifth descriptor is produced by pooling the entire feature map:
+\begin{equation}
+\mathbf{h}_{r}=\operatorname{GAP}(\mathbf{F}_{\Omega_r}),
+\quad r\in\{\mathrm{TL,TR,BL,BR,G}\}.
+\end{equation}
+The node matrix is
+\begin{equation}
+\mathbf{H}=[\mathbf{h}_{\mathrm{TL}},\mathbf{h}_{\mathrm{TR}},
+\mathbf{h}_{\mathrm{BL}},\mathbf{h}_{\mathrm{BR}},\mathbf{h}_{\mathrm{G}}]^{\top}
+\in\mathbb{R}^{5\times160}.
+\end{equation}
+
+The notebook defines the graph with the following fixed adjacency matrix:
+\begin{equation}
+\mathbf{A}=\begin{bmatrix}
+1&1&1&0&1\\
+1&1&0&1&1\\
+1&0&1&1&1\\
+0&1&1&1&1\\
+1&1&1&1&1
+\end{bmatrix}.
+\label{eq:adjacency}
+\end{equation}
+Each node has a self-loop. A local node is linked to its horizontal and vertical neighbors as well as to the global node, but diagonally opposite local regions are not directly connected.
+
+\subsection{Graph Attention Reasoning}
+
+Within a graph attention layer, node $i$ is first mapped through a linear transformation
+\begin{equation}
+\mathbf{u}_{i}=\mathbf{W}\mathbf{h}_{i}.
+\end{equation}
+For every permitted edge $(i,j)$, the layer computes the following unnormalized attention score:
+\begin{equation}
+e_{ij}=\operatorname{LeakyReLU}\left(
+\mathbf{a}^{\top}[\mathbf{u}_{i}\Vert\mathbf{u}_{j}]
+\right),
+\end{equation}
+where $\Vert$ indicates concatenation. Scores associated with absent edges are masked with $-\infty$, after which attention is normalized across the neighbors of node $i$:
+\begin{equation}
+\alpha_{ij}=\frac{\exp(e_{ij})}
+{\sum_{k:A_{ik}=1}\exp(e_{ik})}.
+\end{equation}
+The resulting representation for node $i$ is
+\begin{equation}
+\mathbf{h}'_{i}=\operatorname{Dropout}\left[
+\operatorname{ELU}\left(
+\operatorname{BN}\left(
+\sum_{j:A_{ij}=1}\alpha_{ij}\mathbf{u}_{j}
+\right)\right)\right].
+\end{equation}
+The model stacks two single-head $160\rightarrow160$ GAT layers and then averages the resulting representations across all five nodes:
+\begin{equation}
+\mathbf{z}=\frac{1}{5}\sum_{i=1}^{5}\mathbf{h}_{i}^{(2)}
+\in\mathbb{R}^{160}.
+\end{equation}
+
+\subsection{MLP Classifier and Fuzzy Confidence Head}
+
+Classification is performed with a $160\rightarrow128\rightarrow5$ MLP applied to the pooled graph vector:
+\begin{equation}
+\mathbf{o}=\mathbf{W}_{2}\operatorname{Dropout}_{0.35}
+\left[\operatorname{ReLU}(\mathbf{W}_{1}\mathbf{z}+\mathbf{b}_{1})\right]
++\mathbf{b}_{2}.
+\end{equation}
+The corresponding softmax probabilities are
+\begin{equation}
+\mathbf{p}=\operatorname{softmax}(\mathbf{o}).
+\end{equation}
+Let $p_{(1)}$ and $p_{(2)}$ denote the largest and second-largest probabilities, and define
+\begin{equation}
+m=p_{(1)}-p_{(2)}
+\end{equation}
+as the separation margin between them. For class $k$, the implementation uses the memberships
+\begin{align}
+\mu_{c,k}&=p_k,\\
+\mu_{s,k}&=\operatorname{clip}(p_k+m,0,1).
+\end{align}
+Two trainable global scalars, $\gamma_c$ and $\gamma_s$, are used to obtain
+\begin{equation}
+s_k=(\gamma_c\mu_{c,k})(\gamma_s\mu_{s,k}),
+\end{equation}
+with the final class selected as
+\begin{equation}
+\hat{y}=\arg\max_k s_k.
+\end{equation}
+In total, the network has 4,286,243 trainable parameters. Of these, 4,007,548 belong to the EfficientNet feature extractor, while the remaining 278,695 are distributed across the projection layer, two GAT layers, MLP, and fuzzy scalars.
+
+\subsection{Training Objective}
+
+The training loss combines label-smoothed cross-entropy with a reward term based on the fuzzy score of the ground-truth class:
+\begin{equation}
+\mathcal{L}=\operatorname{CE}_{LS}(\mathbf{o},y;\epsilon=0.05)-\lambda_f s_y,
+\quad \lambda_f=0.10.
+\label{eq:loss}
+\end{equation}
+Since the reward term is subtracted, the overall objective can fall below zero during later epochs. Such values do not indicate an invalid probability or numerical failure; they follow directly from the form of the implemented loss.
+
+\begin{algorithm}[!t]
+\caption{Five-fold model training and out-of-fold assessment}
+\label{alg:training}
+\scriptsize
+\begin{algorithmic}[1]
+\Require Dataset $\mathcal{D}$, labels $\mathbf{y}$, folds $K=5$, maximum epochs $E=14$
+\Ensure Selected checkpoints, fold-level metrics, out-of-fold predictions, and qualitative explanations
+\State Generate stratified folds using shuffling and random seed 42
+\For{$f=1$ to $K$}
+    \State Divide $\mathcal{D}$ into $\mathcal{D}_{tr}^{f}$ for training and $\mathcal{D}_{va}^{f}$ for validation
+    \State Initialize the EfficientNet-B0--GAT--Fuzzy model with ImageNet-pretrained backbone weights
+    \State Configure AdamW with backbone LR $8\times10^{-5}$ and head LR $4\times10^{-4}$
+    \For{$e=1$ to $E$}
+        \For{each mini-batch $(\mathbf{x},y)$ in $\mathcal{D}_{tr}^{f}$}
+            \State Obtain logits, softmax probabilities, and fuzzy scores
+            \State Compute $\mathcal{L}$ using Eq.~\eqref{eq:loss}
+            \State Update the model parameters with mixed-precision AdamW
+        \EndFor
+        \State Measure validation accuracy and macro-averaged metrics
+        \State Step ReduceLROnPlateau and retain the best-performing checkpoint
+        \If{validation accuracy shows no improvement for four epochs}
+            \State \textbf{break}
+        \EndIf
+    \EndFor
+    \State Restore the selected checkpoint
+    \State Generate one prediction for each sample in $\mathcal{D}_{va}^{f}$
+\EndFor
+\State Combine the held-out predictions and produce the quantitative and qualitative analyses
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================
+% IV. EXPERIMENTAL SETUP
+% =============================================================
+\section{Experimental Setup}
+
+\subsection{Dataset}
+
+Experiments are conducted on the five-class SIPaKMeD isolated-cell dataset~\cite{plissiti2018sipakmed}. The class counts obtained by the notebook are presented in Table~\ref{tab:dataset}.
+
+\begin{table}[!t]
+\caption{SIPaKMeD class distribution.}
+\label{tab:dataset}
+\centering
+\footnotesize
+\begin{tabular}{lr}
+\toprule
+Class & Images\\
+\midrule
+Dyskeratotic (abnormal) & 813\\
+Koilocytotic (abnormal) & 825\\
+Metaplastic (benign) & 793\\
+Parabasal (normal) & 787\\
+Superficial-Intermediate (normal) & 831\\
+\midrule
+Total & 4,049\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cross-Validation Protocol}
+
+The evaluation follows stratified five-fold cross-validation with shuffling and random seed 42. Folds 1--4 use 3,239 images for training and 810 for validation, whereas fold 5 uses 3,240 training images and 809 validation images. Each image is assigned exactly one out-of-fold prediction from a model for which that image was never part of the training set. The resulting predictions are then used for pooled error analysis, class-wise evaluation, confidence analysis, and Grad-CAM visualization.
+
+Because the available folders do not include patient or slide identifiers, the splits are created at image level. The reported evaluation should therefore not be treated as patient-level or slide-level external validation.
+
+\subsection{Implementation and Training Configuration}
+
+The notebook was run on Kaggle with Python 3.12.13, PyTorch 2.10.0+cu128, and CUDA support. The code relies on torchvision, scikit-learn, NumPy, pandas, Pillow, and Matplotlib. Automatic mixed precision is activated whenever a CUDA device is available~\cite{paszke2019pytorch}.
+
+\begin{table}[!t]
+\caption{Executed training configuration.}
+\label{tab:training}
+\centering
+\footnotesize
+\begin{tabular}{ll}
+\toprule
+Setting & Value\\
+\midrule
+Input size & $224\times224$\\
+Cross-validation & 5-fold stratified\\
+Random seed & 42\\
+Batch size & 16\\
+Maximum epochs & 14\\
+Backbone learning rate & $8\times10^{-5}$\\
+New-layer learning rate & $4\times10^{-4}$\\
+Optimizer & AdamW\\
+Weight decay & $10^{-4}$\\
+Scheduler & ReduceLROnPlateau\\
+Scheduler factor / patience & 0.5 / 2 epochs\\
+Early-stopping patience & 4 epochs\\
+Label smoothing & 0.05\\
+GAT dropout & 0.20\\
+MLP dropout & 0.35\\
+Fuzzy reward coefficient & 0.10\\
+Mixed precision & Enabled with CUDA\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+AdamW separates weight decay from the gradient-based update rule~\cite{loshchilov2019adamw}. Using different learning rates lets the pretrained backbone adapt gradually while the newly initialized layers learn more quickly.
+
+\subsection{Evaluation Metrics}
+
+Performance is reported using accuracy, macro precision, macro recall, and macro F1-score. If $C$ is the confusion matrix and $K=5$ is the number of classes, then
+\begin{align}
+\operatorname{Accuracy}&=\frac{\sum_k C_{kk}}{\sum_i\sum_j C_{ij}},\\
+\operatorname{Precision}_{macro}&=\frac{1}{K}\sum_{k=1}^{K}\frac{TP_k}{TP_k+FP_k},\\
+\operatorname{Recall}_{macro}&=\frac{1}{K}\sum_{k=1}^{K}\frac{TP_k}{TP_k+FN_k},\\
+F1_{macro}&=\frac{1}{K}\sum_{k=1}^{K}\frac{2P_kR_k}{P_k+R_k}.
+\end{align}
+Macro averaging gives the same weight to each class, preventing the larger categories from dominating the overall metric.
+
+% =============================================================
+% V. IMPLEMENTATION AND REPRODUCIBILITY
+% =============================================================
+\section{Implementation and Reproducibility}
+
+\subsection{Layer-Wise Tensor and Parameter Profile}
+Table~\ref{tab:modelprofile} presents the tensor dimensions and the exact distribution of trainable parameters across the implemented model. EfficientNet-B0 contributes 4,007,548 parameters, or roughly 93.5\% of the full network. The $1\times1$ projection adds 204,960 parameters and is the largest newly initialized block because it maps all 1,280 backbone channels into the 160-dimensional graph representation. Each GAT layer contains 26,240 parameters, and the MLP contains 21,253. Region partitioning, node assembly, adjacency masking, and graph mean pooling introduce no trainable parameters, while the fuzzy head adds only two scalars. Together, these values match the total of 4,286,243 trainable parameters recorded in the notebook.
+
+\begin{table*}[!t]
+\caption{Implemented tensor flow and exact trainable-parameter allocation.}
+\label{tab:modelprofile}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{3.2cm}p{3.0cm}rp{7.0cm}}
+\toprule
+Module & Output representation & Parameters & Function\\
+\midrule
+EfficientNet-B0 feature extractor & $1280\times7\times7$ & 4,007,548 & Extracts convolutional features that are adapted to the normalized RGB cervical-cell image.\\
+$1\times1$ projection & $160\times7\times7$ & 204,960 & Compresses the channel dimension without discarding the final spatial arrangement.\\
+Quadrant and global pooling & $5\times160$ & 0 & Forms the TL, TR, BL, BR, and global nodes through adaptive average pooling.\\
+Graph attention layer 1 & $5\times160$ & 26,240 & Carries out the first masked exchange of image-specific local and global information.\\
+Graph attention layer 2 & $5\times160$ & 26,240 & Further updates the node features after the initial relational reasoning step.\\
+Graph mean pooling & $160$ & 0 & Combines the five updated nodes into a single graph-level descriptor.\\
+MLP classifier & 5 logits & 21,253 & Maps the graph descriptor to five logits through the nonlinear $160\rightarrow128\rightarrow5$ classifier.\\
+Fuzzy confidence head & 5 scores & 2 & Applies the two trainable global scales for confidence and class separation.\\
+\midrule
+Complete model & 5 class scores & \textbf{4,286,243} & Complete end-to-end EfficientNet-B0--GAT--Fuzzy model.\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+This parameter breakdown helps explain why the proposed architecture is lighter than a three-backbone ensemble. Only one full image encoder is retained, and the relational module contributes about 1.2\% of the total parameter count. Parameter count alone, however, is not a complete measure of speed because runtime also depends on graph preparation, data transfer, and low-level kernel execution. The notebook does not contain standardized measurements of latency, throughput, or energy consumption, so this paper does not introduce estimated inference values. A valid efficiency comparison would require every model to be tested on the same hardware, with the same batch size, numerical precision, and warmed-up evaluation procedure.
+
+\subsection{Checkpoint Selection and Out-of-Fold Reconstruction}
+A separate model is initialized for each fold using ImageNet-pretrained EfficientNet-B0 weights. The backbone and the newly added components are placed in different AdamW parameter groups, allowing the pretrained encoder to use the smaller learning rate. At the end of every epoch, performance is measured on the held-out fold, the scheduler is updated, and the checkpoint with the highest validation accuracy is kept. Training stops after four consecutive epochs without improvement or when the 14-epoch limit is reached. The selected checkpoints occur at epochs 5, 8, 11, 8, and 6 for folds 1--5, respectively.
+
+For the final aggregate and qualitative analyses, each fold checkpoint is reloaded and applied only to the images excluded from its training set. The five held-out prediction files are then merged so that every image in the dataset has one out-of-fold record. This avoids explaining or evaluating a sample with a checkpoint that was trained on that same sample. It also makes it possible to trace class-wise scores, confidence distributions, difficult correct cases, confident errors, and Grad-CAM examples to the specific held-out model that produced them.
+
+\subsection{Saved Outputs and Auditability}
+The workflow saves training histories, fold metrics, confusion matrices, classification reports, selected checkpoints, and a combined out-of-fold prediction table. All figures in the report are generated from these saved outputs rather than being entered manually. Keeping model execution separate from report generation allows the plots to be reproduced without rerunning training and enables each displayed sample to be linked to its true label, predicted label, fold, softmax probabilities, and fuzzy score.
+
+The implementation uses random seed 42 and creates shuffled stratified folds. The saved environment information lists Python 3.12.13, PyTorch 2.10.0 with CUDA 12.8 support, together with torchvision, scikit-learn, NumPy, pandas, Pillow, and Matplotlib. Mixed precision is used only when CUDA is present. Reproducibility could be strengthened further by releasing the exact fold indices, locked dependency versions, hardware details, deterministic-backend settings, checkpoint hashes, and any available patient or slide identifiers. Repeating the experiment with several initialization seeds would also help distinguish variation caused by fold difficulty from variation caused by optimization.
+
+\subsection{Scope of Reproducible Claims}
+All numerical claims are limited to results produced by the supplied implementation and the analyses derived from its out-of-fold predictions. The full five-fold experiment was completed, but alternative structures---including one GAT layer, no GAT layers, removal of the global node, and training without the fuzzy reward---were not retrained. They are therefore listed only as planned controlled ablations, with no invented performance values. The published baseline is also used only for descriptive comparison because it was not rerun on the same saved folds. Maintaining this distinction separates measured evidence from mathematical observations and from experiments that have yet to be performed.
+
+% =============================================================
+% VI. RESULTS AND DISCUSSION
+% =============================================================
+\section{Results and Discussion}
+
+\subsection{Quantitative Five-Fold Results}
+
+The fold-level measurements are reported in Table~\ref{tab:foldresults}. Accuracy varies between 95.93\% and 98.52\%, producing a mean of 97.46\% and a population standard deviation of 0.89 percentage points. Fold 2 gives the highest result, whereas fold 1 is the most difficult.
+
+\begin{table*}[!t]
+\caption{Five-fold results. Precision, recall, and F1 are macro averaged.}
+\label{tab:foldresults}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cccccccc}
+\toprule
+Fold & Best epoch & Train & Validation & Accuracy (\%) & Precision (\%) & Recall (\%) & F1 (\%)\\
+\midrule
+1 & 5  & 3,239 & 810 & 95.93 & 95.97 & 95.94 & 95.94\\
+2 & 8  & 3,239 & 810 & 98.52 & 98.52 & 98.53 & 98.53\\
+3 & 11 & 3,239 & 810 & 97.41 & 97.44 & 97.41 & 97.42\\
+4 & 8  & 3,239 & 810 & 98.15 & 98.17 & 98.16 & 98.16\\
+5 & 6  & 3,240 & 809 & 97.28 & 97.31 & 97.30 & 97.29\\
+\midrule
+Mean & 7.60 & 3,239.20 & 809.80 & \textbf{97.46} & \textbf{97.48} & \textbf{97.47} & \textbf{97.47}\\
+Std. dev. & 2.06 & 0.40 & 0.40 & 0.89 & 0.88 & 0.89 & 0.89\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{02_actual_training_accuracy_by_fold.png}
+        \small (a) Training accuracy.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{01_actual_validation_accuracy_by_fold.png}
+        \small (b) Validation accuracy.
+    \end{minipage}
+    \caption{Training and validation accuracy across the five folds. Curves end at different epochs because of early stopping.}
+    \label{fig:accuracycurves}
+\end{figure*}
+
+The learning curves indicate that strong validation performance is usually reached within relatively few epochs. Differences between folds show that the composition of the held-out subset affects task difficulty, which supports using cross-validation instead of relying on a single train--test partition.
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{03_actual_training_loss_by_fold.png}
+        \small (a) Training objective.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.29\textheight,keepaspectratio]{04_actual_validation_loss_by_fold.png}
+        \small (b) Validation objective.
+    \end{minipage}
+    \caption{Objective values recorded for all five folds. Because the loss subtracts the ground-truth fuzzy reward from label-smoothed cross-entropy, later values can become negative without implying numerical instability.}
+    \label{fig:losscurves}
+\end{figure*}
+
+Across all folds, the training objective declines steadily, whereas the validation objective fluctuates more as the model approaches convergence. This is reasonable because each held-out partition contains a different combination of visually ambiguous examples. Checkpoints are chosen by validation accuracy rather than by the minimum value of the modified loss, so the fuzzy reward alone cannot determine model selection. The stopping points also confirm that the folds require different amounts of optimization, with the best checkpoints appearing between epochs 5 and 11. The reported average therefore comes from independently selected models rather than from repeatedly evaluating a single checkpoint.
+
+\subsection{Aggregate Out-of-Fold Evaluation}
+
+Combining the five held-out partitions yields exactly one prediction for each of the 4,049 images. The pooled performance is summarized in Table~\ref{tab:oof}.
+
+\begin{table}[!t]
+\caption{Aggregate out-of-fold evaluation.}
+\label{tab:oof}
+\centering
+\footnotesize
+\begin{tabular}{lr}
+\toprule
+Measure & Result\\
+\midrule
+Total images & 4,049\\
+Correct predictions & 3,946\\
+Incorrect predictions & 103\\
+Accuracy & 97.46\%\\
+Macro precision & 97.47\%\\
+Macro recall & 97.47\%\\
+Macro F1-score & 97.47\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{05_actual_foldwise_metrics.png}
+        \small (a) Fold-wise metrics.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{06_actual_baseline_vs_proposed.png}
+        \small (b) Baseline versus proposed mean.
+    \end{minipage}
+    \caption{Summary of the quantitative results. The baseline comparison remains descriptive because the baseline was not evaluated on the same stored folds.}
+    \label{fig:metricsbaseline}
+\end{figure*}
+
+\subsection{Comparison with the Assigned Baseline}
+
+For five-class SIPaKMeD classification, the assigned fuzzy-rank ensemble reports 95.43\% accuracy, 95.34\% precision, 95.38\% recall, and 95.36\% F1-score~\cite{manna2021}. Table~\ref{tab:baseline} places these published values beside the mean obtained from the completed proposed-model runs.
+
+\begin{table}[!t]
+\caption{Descriptive comparison with the assigned baseline.}
+\label{tab:baseline}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+Method & Accuracy & Precision & Recall & F1\\
+ & \multicolumn{4}{c}{(\%)}\\
+\midrule
+Fuzzy-rank ensemble~\cite{manna2021} & 95.43 & 95.34 & 95.38 & 95.36\\
+Proposed model & \textbf{97.46} & \textbf{97.48} & \textbf{97.47} & \textbf{97.47}\\
+\midrule
+Absolute gain & +2.03 & +2.14 & +2.09 & +2.11\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The baseline error rate is 4.57\%, while the proposed mean error rate is 2.54\%. Therefore, the relative reduction in error is
+\begin{equation}
+\frac{4.57-2.54}{4.57}\times100\approx44.3\%.
+\end{equation}
+The difference is substantial as a descriptive result, but it should not be interpreted as a controlled statistical comparison. The baseline numbers come from the published study, and the two methods were not evaluated using identical fold assignments in the supplied notebook.
+
+\subsection{Class-Wise Quantitative Analysis}
+
+Table~\ref{tab:classresults} gives the pooled metrics for each class. Parabasal and Superficial-Intermediate cells show the most consistent recognition, while Koilocytotic cells obtain the lowest recall and F1-score and therefore account for the largest unresolved difficulty.
+
+\begin{table}[!t]
+\caption{Aggregate out-of-fold class-wise metrics.}
+\label{tab:classresults}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.4pt}
+\begin{tabular}{lrrrr}
+\toprule
+Class & Precision & Recall & F1 & Support\\
+ & \multicolumn{3}{c}{(\%)} & \\
+\midrule
+Dyskeratotic & 97.05 & 97.05 & 97.05 & 813\\
+Koilocytotic & 95.22 & 94.18 & 94.70 & 825\\
+Metaplastic & 95.91 & 97.60 & 96.75 & 793\\
+Parabasal & 100.00 & 99.11 & 99.55 & 787\\
+Superficial-Intermediate & 99.16 & 99.40 & 99.28 & 831\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{07_actual_confusion_matrix_counts_skyblue.png}
+        \small (a) Confusion-matrix counts.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{08_actual_confusion_matrix_normalized_skyblue.png}
+        \small (b) Row-normalized confusion matrix.
+    \end{minipage}
+    \caption{Aggregate out-of-fold confusion matrices, with true classes shown by rows and predicted classes by columns.}
+    \label{fig:confusion}
+\end{figure*}
+
+\begin{figure*}[!t]
+    \centering
+    \safeincludegraphics[width=0.96\textwidth,height=0.54\textheight,keepaspectratio]{09_actual_per_fold_confusion_matrices_skyblue.png}
+    \caption{Row-normalized confusion matrices for each held-out fold. Similar error patterns appear across several folds rather than being confined to a single partition.}
+    \label{fig:perfoldconfusion}
+\end{figure*}
+
+The individual matrices in Fig.~\ref{fig:perfoldconfusion} reveal consistency that cannot be seen from the pooled matrix alone. The strongest classes maintain a pronounced diagonal across every fold, while the boundary between abnormal and benign categories is less stable. Fold 1 has the highest error level, yet Koilocytotic-centered confusion is also visible in the better-performing folds. Because this pattern recurs across partitions, it is unlikely to be caused solely by one atypical split.
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{10_actual_classwise_metrics.png}
+        \small (a) Class-wise precision, recall, and F1.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.30\textheight,keepaspectratio]{14_actual_errors_by_true_class.png}
+        \small (b) Errors by true class.
+    \end{minipage}
+    \caption{Class-level performance and error distribution.}
+    \label{fig:classanalysis}
+\end{figure*}
+
+The pooled confusion matrix contains 48 errors for true Koilocytotic cells, 24 for Dyskeratotic, 19 for Metaplastic, 7 for Parabasal, and 5 for Superficial-Intermediate. Table~\ref{tab:confusions} lists the most common error directions.
+
+\begin{table}[!t]
+\caption{Most frequent directed out-of-fold errors.}
+\label{tab:confusions}
+\centering
+\footnotesize
+\begin{tabular}{lr}
+\toprule
+True $\rightarrow$ predicted & Images\\
+\midrule
+Koilocytotic $\rightarrow$ Metaplastic & 23\\
+Dyskeratotic $\rightarrow$ Koilocytotic & 20\\
+Koilocytotic $\rightarrow$ Dyskeratotic & 20\\
+Metaplastic $\rightarrow$ Koilocytotic & 14\\
+Koilocytotic $\rightarrow$ Superficial-Intermediate & 5\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These results suggest that the hardest distinctions involve visually similar abnormal and benign morphologies, not the two normal classes that achieve the strongest performance.
+
+\begin{figure}[!t]
+    \centering
+    \safeincludegraphics[width=\columnwidth,height=0.38\textheight,keepaspectratio]{15_actual_misclassification_pairs_skyblue.png}
+    \caption{Directed out-of-fold error pairs with diagonal entries removed. Each arrow points from the true class toward the predicted class.}
+    \label{fig:misclassificationpairs}
+\end{figure}
+
+Figure~\ref{fig:misclassificationpairs} makes the direction of each error explicit, unlike a condensed confusion summary. Koilocytotic examples are confused with both Metaplastic and Dyskeratotic cells, and examples from those classes are also predicted as Koilocytotic. The pattern is bidirectional but not perfectly symmetric, which points to overlapping morphology in the learned feature space rather than a simple one-way label swap. A future experiment could treat these pairs as hard positive and hard negative examples in a supervised contrastive objective while retaining the same five-fold evaluation protocol.
+
+\subsection{Qualitative Grad-CAM Analysis}
+
+Grad-CAM is generated from the last EfficientNet-B0 feature block using gradients of the selected class logit. If $A^q$ denotes channel $q$ and $o_c$ denotes the class logit, then
+\begin{align}
+\beta_q^c&=\frac{1}{HW}\sum_{i=1}^{H}\sum_{j=1}^{W}
+\frac{\partial o_c}{\partial A_{ij}^{q}},\\
+L_{\mathrm{GradCAM}}^c&=\operatorname{ReLU}\left(\sum_q\beta_q^cA^q\right).
+\end{align}
+The gradient travels through the MLP, graph pooling, and both GAT layers before reaching the backbone. The resulting map therefore reflects the decision of the full model rather than that of a standalone CNN head.
+
+\begin{figure*}[!t]
+    \centering
+    \safeincludegraphics[
+        width=0.98\textwidth,
+        height=0.72\textheight,
+        keepaspectratio
+    ]{gradcam_all_compact.png}
+    \caption{Out-of-fold Grad-CAM visualizations. One correctly classified example from each class appears on the left, while the five most confident errors appear on the right.}
+    \label{fig:gradcam}
+\end{figure*}
+
+For many correct predictions, the strongest activation lies around the nucleus or central cellular structure. Several errors instead highlight image borders, background regions, or broad cell outlines, indicating that the network may occasionally depend on non-specific cues. Grad-CAM should be viewed as an inspection tool rather than evidence of clinical reasoning, and a cytologist would need to judge whether the highlighted areas are medically relevant.
+
+\subsection{Difficult Correct Cases and High-Confidence Errors}
+
+For each class, the difficult-correct panel shows the held-out image that was classified correctly with the lowest normalized fuzzy confidence $s_{\hat{y}}/\sum_k s_k$. The corresponding values are 0.448, 0.432, 0.461, 0.450, and 0.542 for Dyskeratotic, Koilocytotic, Metaplastic, Parabasal, and Superficial-Intermediate cells. These cases show that challenging appearance---including weak contrast, blurred borders, small nuclei, and overlapping background content---does not necessarily result in an error.
+
+\begin{figure*}[!t]
+    \centering
+    \safeincludegraphics[
+        width=0.98\textwidth,
+        height=0.66\textheight,
+        keepaspectratio
+    ]{actual_difficult_correct_predictions.png}
+    \caption{Difficult yet correct out-of-fold cases, chosen as the lowest-confidence correct prediction within each true class.}
+    \label{fig:difficult}
+\end{figure*}
+
+The confident-error panel contains the ten misclassified samples with the highest normalized fuzzy confidence. Seven of these ten cases are true Koilocytotic cells. Across all 103 errors, 21 receive fuzzy confidence of at least 0.90 and 12 are above 0.95. Confidence by itself therefore cannot be used as proof that a prediction is correct.
+
+\begin{figure*}[!t]
+    \centering
+    \safeincludegraphics[
+        width=0.98\textwidth,
+        height=0.66\textheight,
+        keepaspectratio
+    ]{actual_misclassifications.png}
+    \caption{The ten most confident out-of-fold errors. These examples are intended to reveal overconfident failure modes rather than typical mistakes.}
+    \label{fig:misclassifications}
+\end{figure*}
+
+\subsection{Confidence Analysis}
+
+Correct classifications have an average softmax confidence of 0.955 and an average normalized fuzzy confidence of 0.960. For incorrect classifications, the corresponding means fall to 0.720 and 0.773. Although this difference is informative, the two distributions still overlap and a number of errors remain highly confident.
+
+\begin{figure*}[!t]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.245\textheight,keepaspectratio]{11_actual_softmax_confidence_distribution.png}
+        \small (a) Softmax confidence.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.245\textheight,keepaspectratio]{12_actual_fuzzy_confidence_distribution.png}
+        \small (b) Normalized fuzzy confidence.
+    \end{minipage}
+
+    \vspace{1.5mm}
+
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.245\textheight,keepaspectratio]{13_actual_confidence_margin_scatter.png}
+        \small (c) Confidence versus top-two margin.
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \safeincludegraphics[width=\linewidth,height=0.245\textheight,keepaspectratio]{16_actual_confidence_calibration.png}
+        \small (d) Reliability diagram.
+    \end{minipage}
+    \caption{Confidence behavior across all out-of-fold predictions. The overlap between correct and incorrect cases shows that the outputs are not perfectly calibrated.}
+    \label{fig:confidence}
+\end{figure*}
+
+The fuzzy transformation raises the displayed confidence of many samples, including some that are wrong. Before deployment, the outputs would therefore need a dedicated calibration study using measures such as expected calibration error, class-wise reliability curves, Brier score, or temperature scaling.
+
+\subsection{Ablation and Component Analysis}
+
+A proper controlled ablation study requires every model variant to be retrained under the same five-fold protocol. The supplied notebook contains results only for the complete model with two GAT layers, so no performance values are assigned to variants that were not run. Even so, two code-consistent observations can be made: the final decision rule can be examined without retraining, and the parameter cost of each structural change can be calculated exactly.
+
+When $\gamma_c\gamma_s$ remains positive and fixed, the fuzzy score is monotonic in $p_k$ because each class receives the same non-negative margin $m$ before clipping. It follows that
+\begin{equation}
+\arg\max_k s_k=\arg\max_k p_k.
+\end{equation}
+Therefore, replacing only the post-training fuzzy \emph{decision rule} with softmax argmax leaves every predicted label unchanged and preserves the 97.46\% aggregate accuracy. This analytical result does not show that the fuzzy reward used during training is unnecessary; deleting the reward from Eq.~\eqref{eq:loss} would change the optimization process and must be evaluated through retraining.
+
+\begin{table}[!t]
+\caption{Executed and analytically verifiable ablation.}
+\label{tab:ablation}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{p{2.35cm}rp{3.0cm}}
+\toprule
+Variant & Parameters & Result and interpretation\\
+\midrule
+Full model
+& 4,286,243
+& Measured 97.46\% accuracy in the completed five-fold experiment.\\
+Softmax argmax with the same trained weights
+& 4,286,241
+& The accuracy remains 97.46\%; positive global fuzzy scales do not alter the class ordering.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!t]
+\caption{Required controlled structural ablations.}
+\label{tab:plannedablation}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{p{2.2cm}rp{3.15cm}}
+\toprule
+Variant & Parameters & Status and purpose\\
+\midrule
+One GAT layer
+& 4,260,003
+& Not run; intended to measure the contribution of the second relational update.\\
+No GAT layers
+& 4,233,763
+& Not run; intended to separate graph-based reasoning from direct feature pooling.\\
+No global node
+& 4,286,243
+& Not run; intended to evaluate the value of global context while preserving the learned matrix dimensions.\\
+No fuzzy reward
+& 4,286,241
+& Not run; intended to examine the training effect of the $-0.1s_y$ reward term.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The analysis also exposes a limitation of the current fuzzy head: its two scalar factors are shared across all classes rather than learned separately for each class. Their main influence is therefore expected through the training reward and the scale of the reported confidence, not through a more expressive class-dependent ranking mechanism. A future controlled study should compare (i) training with softmax alone, (ii) one and two GAT layers, (iii) graph pooling and direct global pooling, (iv) inclusion and removal of the global node, and (v) shared and class-specific fuzzy membership parameters.
+
+\subsection{Why the Proposed Model Performs Well}
+
+Four aspects of the design help explain the measured performance. First, end-to-end fine-tuning adjusts EfficientNet features to the visual characteristics of cervical cells. Second, the region graph preserves four local descriptors instead of collapsing the spatial map immediately. Third, graph attention combines local information with global context through weights that vary from one image to another. Finally, augmentation, separate learning rates, label smoothing, dropout, AdamW, early stopping, and mixed-precision training provide a stable optimization procedure.
+
+\subsection{Limitations and Threats to Validity}
+
+The results should be interpreted in light of the following limitations:
+\begin{enumerate}
+    \item The baseline comparison uses values from a separate study rather than a paired rerun on the same folds.
+    \item The held-out fold is used both to select the checkpoint and to report final performance; nested validation would lessen this source of selection bias.
+    \item The split does not enforce grouping by patient, slide, or acquisition source.
+    \item Every image is processed with the same fixed graph structure.
+    \item Dividing a $7\times7$ feature map produces quadrants of unequal size.
+    \item The implemented GAT uses a single attention head and the original static GAT formulation.
+    \item The fuzzy head contains two shared scalars rather than class-specific membership functions.
+    \item The confidence scores are not fully calibrated, and several wrong predictions remain highly confident.
+    \item Grad-CAM has limited spatial resolution and cannot demonstrate clinical causality.
+    \item The study is restricted to one isolated-cell dataset and does not include external laboratories, whole-slide images, or prospective clinical evaluation.
+\end{enumerate}
+
+% Prevent all result figures from moving into the conclusion.
+\FloatBarrier
+
+% =============================================================
+% VI. CONCLUSION
+% =============================================================
+\section{Conclusion and Future Work}
+
+This study introduced an EfficientNet-B0 Region-Graph Attention Network with a Fuzzy Confidence Head for five-class cervical cytology classification, following the supplied implementation closely. Instead of using a fuzzy ensemble with three separate backbones, the model relies on one EfficientNet-B0 encoder, reduces the final feature map to 160 channels, forms four local nodes and one global node, applies two graph attention updates, and produces its decision through graph pooling, an MLP, and a fuzzy confidence-and-separation score.
+
+Across all 4,049 SIPaKMeD images, the stratified five-fold experiment reached mean accuracy of 97.46\%, macro precision of 97.48\%, macro recall of 97.47\%, and macro F1-score of 97.47\%. The combined out-of-fold predictions include 3,946 correct classifications and 103 errors. Compared descriptively with the published five-class result of the assigned paper, the proposed mean is higher by 2.03 percentage points and corresponds to an approximate 44.3\% reduction in error rate. Parabasal and Superficial-Intermediate cells are recognized most reliably, whereas Koilocytotic cells account for the largest share of the remaining confusion. The qualitative results show frequent attention to central cellular structures but also reveal background-sensitive decisions and confidently wrong predictions.
+
+Future experiments should reproduce the assigned baseline on the same folds, complete the controlled retraining studies listed in Table~\ref{tab:ablation}, and use nested cross-validation that respects patient or slide groups. Other useful directions include learning the graph connectivity from each image, comparing the current GAT with GATv2, multi-head, and residual alternatives, developing class-specific fuzzy memberships, calibrating confidence, measuring latency, memory use, and energy consumption, and testing on Mendeley LBC, Herlev, whole-slide images, and data from external laboratories. At this stage, the model is best regarded as an experimental decision-support approach rather than a clinically validated diagnostic tool.
+
+% Keep references after all pending floats.
+\FloatBarrier
+
+% =============================================================
+% REFERENCES
+% =============================================================
+\begin{thebibliography}{99}
+\scriptsize
+\setlength{\itemsep}{0pt}
+\setlength{\parskip}{0pt}
+
+\bibitem{who2026}
+World Health Organization,
+``Cervical cancer,''
+WHO Fact Sheet, 2026.
+[Online]. Available: \url{https://www.who.int/news-room/fact-sheets/detail/cervical-cancer}
+
+\bibitem{plissiti2018sipakmed}
+M.~E. Plissiti, P.~Dimitrakopoulos, G.~Sfikas, C.~Nikou,
+O.~Krikoni, and A.~Charchanti,
+``SIPaKMeD: A new dataset for feature and image based classification of normal and pathological cervical cells in Pap smear images,''
+in \emph{Proc. 25th IEEE Int. Conf. Image Processing (ICIP)},
+2018, pp.~3144--3148,
+doi: 10.1109/ICIP.2018.8451588.
+
+\bibitem{manna2021}
+A.~Manna, R.~Kundu, D.~Kaplun, A.~Sinitca, and R.~Sarkar,
+``A fuzzy rank-based ensemble of CNN models for classification of cervical cytology,''
+\emph{Scientific Reports}, vol.~11, Art.~no.~14538, 2021,
+doi: 10.1038/s41598-021-93783-8.
+
+\bibitem{lin2018morphology}
+H.~Lin, Y.~Hu, S.~Chen, J.~Yao, and L.~Zhang,
+``Fine-grained classification of cervical cells using morphological and appearance based convolutional neural networks,''
+\emph{arXiv preprint arXiv:1810.06058}, 2018.
+
+\bibitem{basak2021pca}
+H.~Basak, R.~Kundu, S.~Chakraborty, and N.~Das,
+``Cervical cytology classification using PCA and GWO enhanced deep features selection,''
+\emph{arXiv preprint arXiv:2106.04919}, 2021.
+
+\bibitem{pramanik2022fuzzy}
+R.~Pramanik, M.~Biswas, S.~Sen, L.~A. de Souza J\'unior,
+J.~P. Papa, and R.~Sarkar,
+``A fuzzy distance-based ensemble of deep models for cervical cancer detection,''
+\emph{Computer Methods and Programs in Biomedicine},
+vol.~219, Art.~no.~106776, 2022,
+doi: 10.1016/j.cmpb.2022.106776.
+
+\bibitem{tan2019efficientnet}
+M.~Tan and Q.~V. Le,
+``EfficientNet: Rethinking model scaling for convolutional neural networks,''
+in \emph{Proc. 36th Int. Conf. Machine Learning (ICML)},
+vol.~97, 2019, pp.~6105--6114.
+
+\bibitem{velickovic2018gat}
+P.~Veli\v{c}kovi\'c, G.~Cucurull, A.~Casanova, A.~Romero,
+P.~Li\`o, and Y.~Bengio,
+``Graph attention networks,''
+in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2018.
+
+\bibitem{deo2024cerviformer}
+B.~S. Deo, M.~Pal, P.~K. Panigrahi, and A.~Pradhan,
+``CerviFormer: A Pap-smear-based cervical cancer classification method using cross-attention and latent transformer,''
+\emph{International Journal of Imaging Systems and Technology},
+vol.~34, no.~2, Art.~no.~e23043, 2024,
+doi: 10.1002/ima.23043.
+
+\bibitem{li2026geometry}
+Y.~Li, C.~Ye, N.~Lyu, W.~Chen, and Z.~Mao,
+``Geometry-aware Gaussian prior and axial attention for cervical cytology image classification,''
+\emph{arXiv preprint arXiv:2607.10278}, 2026.
+
+\bibitem{selvaraju2017gradcam}
+R.~R. Selvaraju, M.~Cogswell, A.~Das, R.~Vedantam,
+D.~Parikh, and D.~Batra,
+``Grad-CAM: Visual explanations from deep networks via gradient-based localization,''
+in \emph{Proc. IEEE Int. Conf. Computer Vision (ICCV)},
+2017, pp.~618--626,
+doi: 10.1109/ICCV.2017.74.
+
+\bibitem{loshchilov2019adamw}
+I.~Loshchilov and F.~Hutter,
+``Decoupled weight decay regularization,''
+in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2019.
+
+\bibitem{paszke2019pytorch}
+A.~Paszke \emph{et al.},
+``PyTorch: An imperative style, high-performance deep learning library,''
+in \emph{Advances in Neural Information Processing Systems},
+vol.~32, 2019, pp.~8024--8035.
+
+\end{thebibliography}
+
+\end{document}
